@@ -25,7 +25,7 @@ _UNIT_TOKEN_RE = r"(?:"
 _UNIT_TOKEN_RE += "|".join(re.escape(u) for u in _UNIT_WORDS)
 _UNIT_TOKEN_RE += r")"
 _UNIT_RE = r"(?:^|\\W)(?P<unit>" + "|".join(re.escape(u) for u in _UNIT_WORDS) + r")(?:$|\\W)"
-_NUM_RE = r"[-+]?\\d+(?:\\.\\d+)?"
+_NUM_RE = r"[-+]?\d+(?:\.\d+)?"
 
 
 def _find_units(text: str) -> list[str]:
@@ -58,30 +58,30 @@ def infer(messages: list[dict]) -> str:
     pattern_unit = r"(?:^|\\W)" + _UNIT_TOKEN_RE + r"(?:$|\\W)"
 
     patterns = [
-        r"convert\\s+"
+        r"convert\s+"
         + pattern_num
-        + r"\\s+(?P<from_unit>"
+        + r"\s+(?P<from_unit>"
         + _UNIT_TOKEN_RE
-        + r")\\s+to\\s+(?P<to_unit>"
+        + r")\s+to\s+(?P<to_unit>"
         + _UNIT_TOKEN_RE
         + r")",
         pattern_num
-        + r"\\s+(?P<from_unit>"
+        + r"\s+(?P<from_unit>"
         + _UNIT_TOKEN_RE
-        + r")\\s+in\\s+(?P<to_unit>"
+        + r")\s+in\s+(?P<to_unit>"
         + _UNIT_TOKEN_RE
         + r")",
-        r"переведи\\s+"
+        r"переведи\s+"
         + pattern_num
-        + r"\\s+(?P<from_unit>"
+        + r"\s+(?P<from_unit>"
         + _UNIT_TOKEN_RE
-        + r")\\s+в\\s+(?P<to_unit>"
+        + r")\s+в\s+(?P<to_unit>"
         + _UNIT_TOKEN_RE
         + r")",
         pattern_num
-        + r"\\s+(?P<from_unit>"
+        + r"\s+(?P<from_unit>"
         + _UNIT_TOKEN_RE
-        + r")\\s+в\\s+(?P<to_unit>"
+        + r")\s+в\s+(?P<to_unit>"
         + _UNIT_TOKEN_RE
         + r")",
     ]
