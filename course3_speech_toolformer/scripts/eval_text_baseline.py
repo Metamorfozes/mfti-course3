@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import sys
@@ -11,6 +12,7 @@ from llm_stub import infer
 from metrics import evaluate
 from parse_toolcall import parse_toolcall
 from prompting import build_messages
+from tool_schema import normalize_unit
 
 
 def _toolcall_to_dict(toolcall):
@@ -19,7 +21,33 @@ def _toolcall_to_dict(toolcall):
     return toolcall.model_dump()
 
 
+def _toolcall_equal(expected: dict | None, predicted: dict | None) -> bool:
+    if expected is None or predicted is None:
+        return False
+    if expected.get("name") != predicted.get("name"):
+        return False
+    exp_args = expected.get("arguments", {})
+    pred_args = predicted.get("arguments", {})
+    exp_from = normalize_unit(str(exp_args.get("from_unit", "")))
+    exp_to = normalize_unit(str(exp_args.get("to_unit", "")))
+    pred_from = normalize_unit(str(pred_args.get("from_unit", "")))
+    pred_to = normalize_unit(str(pred_args.get("to_unit", "")))
+    if exp_from != pred_from or exp_to != pred_to:
+        return False
+    try:
+        exp_value = float(exp_args.get("value"))
+        pred_value = float(pred_args.get("value"))
+    except (TypeError, ValueError):
+        return False
+    return abs(exp_value - pred_value) <= 1e-6
+
+
 def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--limit", type=int, default=None)
+    parser.add_argument("--debug_k", type=int, default=10)
+    args = parser.parse_args()
+
     data_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "data", "text_dataset.json"))
     data_path = Path(data_path)
     data_path.parent.mkdir(parents=True, exist_ok=True)
@@ -30,8 +58,12 @@ def main() -> None:
     with open(data_path, "r", encoding="utf-8") as f:
         samples = json.load(f)
 
+    limit = min(50, len(samples)) if args.limit is None else min(args.limit, len(samples))
+    samples = samples[:limit]
+
     preds = []
     error_cases = []
+    mismatches = []
 
     for sample in samples:
         messages = build_messages(sample["text"])
@@ -46,18 +78,26 @@ def main() -> None:
         predicted_tool_call = _toolcall_to_dict(toolcall)
 
         mismatch = False
-        if predicted_tool != tool_required:
+        if expected_tool is None and predicted_tool:
             mismatch = True
-        elif tool_required:
-            if predicted_tool_call != expected_tool:
+        elif expected_tool is not None and not predicted_tool:
+            mismatch = True
+        elif expected_tool is not None and predicted_tool:
+            if not _toolcall_equal(expected_tool, predicted_tool_call):
                 mismatch = True
-        elif status == "invalid":
-            mismatch = True
 
         if mismatch and len(error_cases) < 20:
             error_cases.append(
                 {
                     "id": sample.get("id"),
+                    "text": sample.get("text"),
+                    "expected": expected_tool,
+                    "predicted": {"status": status, "tool_call": predicted_tool_call},
+                }
+            )
+        if mismatch:
+            mismatches.append(
+                {
                     "text": sample.get("text"),
                     "expected": expected_tool,
                     "predicted": {"status": status, "tool_call": predicted_tool_call},
@@ -72,6 +112,11 @@ def main() -> None:
         json.dump(report, f, ensure_ascii=False, indent=2)
 
     print(json.dumps(report["metrics"], ensure_ascii=False, indent=2))
+    print(f"=== DEBUG (first {args.debug_k} mismatches) ===")
+    for item in mismatches[: args.debug_k]:
+        print(f'text: {item.get("text")}')
+        print(f'expected: {json.dumps(item.get("expected"), ensure_ascii=False)}')
+        print(f'pred: {json.dumps(item.get("predicted"), ensure_ascii=False)}')
 
 
 if __name__ == "__main__":
