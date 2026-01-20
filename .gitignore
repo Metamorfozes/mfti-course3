@@ -26,3 +26,8 @@ logs/
 *.zip
 *.tar
 *.tar.gz
+# Course3 Speech Toolformer local assets
+course3_speech_toolformer/tools/llama/*
+!course3_speech_toolformer/tools/llama/.gitkeep
+course3_speech_toolformer/models/*
+!course3_speech_toolformer/models/.gitkeep

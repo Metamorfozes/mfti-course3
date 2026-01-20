@@ -8,7 +8,6 @@ from pathlib import Path
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "src")))
 
-from llm_stub import infer
 from metrics import evaluate
 from parse_toolcall import parse_toolcall
 from prompting import build_messages
@@ -46,6 +45,7 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--debug_k", type=int, default=10)
+    parser.add_argument("--engine", choices=["stub", "llamacpp"], default="stub")
     args = parser.parse_args()
 
     data_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "data", "text_dataset.json"))
@@ -65,9 +65,31 @@ def main() -> None:
     error_cases = []
     mismatches = []
 
+    if args.engine == "stub":
+        from llm_stub import infer
+
+        def _infer(messages: list[dict]) -> str:
+            return infer(messages)
+    else:
+        from config import load_env
+        from llm_llamacpp import LlamaCppRunner
+
+        env = load_env()
+        runner = LlamaCppRunner(
+            llama_bin=env["LLAMA_BIN"],
+            model_path=env["LLAMA_MODEL"],
+            ctx=env["LLAMA_CTX"],
+            gpu_layers=env["LLAMA_GPU_LAYERS"],
+            temperature=env["LLAMA_TEMP"],
+            max_tokens=env["LLAMA_MAX_TOKENS"],
+        )
+
+        def _infer(messages: list[dict]) -> str:
+            return runner.infer(messages)
+
     for sample in samples:
         messages = build_messages(sample["text"])
-        out = infer(messages)
+        out = _infer(messages)
         status, toolcall = parse_toolcall(out)
 
         preds.append({"status": status, "toolcall": toolcall})
