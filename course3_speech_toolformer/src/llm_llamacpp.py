@@ -35,7 +35,6 @@ class LlamaCppRunner:
             self.llama_bin,
             "-m",
             self.model_path,
-            "-e",
             "--ctx-size",
             str(self.ctx),
             "--n-gpu-layers",
@@ -44,6 +43,7 @@ class LlamaCppRunner:
             "0",
             "--n-predict",
             str(self.max_tokens),
+            "-e",
             "--prompt",
             prompt,
         ]
@@ -59,4 +59,4 @@ class LlamaCppRunner:
             raise RuntimeError("llama-cli timed out after 60 seconds") from exc
         if result.returncode != 0:
             raise RuntimeError(result.stderr.strip())
-        return result.stdout
+        return result.stdout.strip()
