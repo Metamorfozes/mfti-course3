@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+from pathlib import Path
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "src")))
 
@@ -20,6 +21,12 @@ def _toolcall_to_dict(toolcall):
 
 def main() -> None:
     data_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "data", "text_dataset.json"))
+    data_path = Path(data_path)
+    data_path.parent.mkdir(parents=True, exist_ok=True)
+    if not data_path.exists():
+        raise FileNotFoundError(
+            f"Dataset not found: {data_path}. Run: python scripts/make_text_dataset.py"
+        )
     with open(data_path, "r", encoding="utf-8") as f:
         samples = json.load(f)
 
