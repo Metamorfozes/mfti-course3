@@ -35,18 +35,28 @@ class LlamaCppRunner:
             self.llama_bin,
             "-m",
             self.model_path,
+            "-e",
             "--ctx-size",
             str(self.ctx),
             "--n-gpu-layers",
             str(self.gpu_layers),
             "--temp",
-            str(self.temperature),
+            "0",
             "--n-predict",
             str(self.max_tokens),
             "--prompt",
             prompt,
         ]
-        result = subprocess.run(cmd, capture_output=True, text=True)
+        try:
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                stdin=subprocess.DEVNULL,
+                timeout=60,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise RuntimeError("llama-cli timed out after 60 seconds") from exc
         if result.returncode != 0:
             raise RuntimeError(result.stderr.strip())
         return result.stdout
