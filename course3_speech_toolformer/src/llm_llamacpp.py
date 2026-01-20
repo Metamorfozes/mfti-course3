@@ -54,10 +54,9 @@ class LlamaCppRunner:
                 "--n-gpu-layers",
                 str(self.gpu_layers),
                 "--temp",
-                "0",
+                str(self.temperature),
                 "--n-predict",
                 str(self.max_tokens),
-                "-e",
                 "-f",
                 prompt_path,
             ]
@@ -66,7 +65,7 @@ class LlamaCppRunner:
                 capture_output=True,
                 text=True,
                 stdin=subprocess.DEVNULL,
-                timeout=30,
+                timeout=120,
             )
         except subprocess.TimeoutExpired as exc:
             raise RuntimeError("llama-cli timed out") from exc
