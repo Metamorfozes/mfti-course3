@@ -21,6 +21,9 @@ _RU_MAP_KEYS = {
 }
 
 _UNIT_WORDS = sorted(ALL_UNITS | _RU_MAP_KEYS, key=len, reverse=True)
+_UNIT_TOKEN_RE = r"(?:"
+_UNIT_TOKEN_RE += "|".join(re.escape(u) for u in _UNIT_WORDS)
+_UNIT_TOKEN_RE += r")"
 _UNIT_RE = r"(?:^|\\W)(?P<unit>" + "|".join(re.escape(u) for u in _UNIT_WORDS) + r")(?:$|\\W)"
 _NUM_RE = r"[-+]?\\d+(?:\\.\\d+)?"
 
@@ -52,34 +55,34 @@ def infer(messages: list[dict]) -> str:
     lower = text.lower()
 
     pattern_num = r"(?P<num>" + _NUM_RE + r")"
-    pattern_unit = _UNIT_RE
+    pattern_unit = r"(?:^|\\W)" + _UNIT_TOKEN_RE + r"(?:$|\\W)"
 
     patterns = [
         r"convert\\s+"
         + pattern_num
         + r"\\s+(?P<from_unit>"
-        + pattern_unit
+        + _UNIT_TOKEN_RE
         + r")\\s+to\\s+(?P<to_unit>"
-        + pattern_unit
+        + _UNIT_TOKEN_RE
         + r")",
         pattern_num
         + r"\\s+(?P<from_unit>"
-        + pattern_unit
+        + _UNIT_TOKEN_RE
         + r")\\s+in\\s+(?P<to_unit>"
-        + pattern_unit
+        + _UNIT_TOKEN_RE
         + r")",
         r"переведи\\s+"
         + pattern_num
         + r"\\s+(?P<from_unit>"
-        + pattern_unit
+        + _UNIT_TOKEN_RE
         + r")\\s+в\\s+(?P<to_unit>"
-        + pattern_unit
+        + _UNIT_TOKEN_RE
         + r")",
         pattern_num
         + r"\\s+(?P<from_unit>"
-        + pattern_unit
+        + _UNIT_TOKEN_RE
         + r")\\s+в\\s+(?P<to_unit>"
-        + pattern_unit
+        + _UNIT_TOKEN_RE
         + r")",
     ]
 
