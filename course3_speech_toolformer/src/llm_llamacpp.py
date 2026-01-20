@@ -57,6 +57,8 @@ class LlamaCppRunner:
                 str(self.temperature),
                 "--n-predict",
                 str(self.max_tokens),
+                "--simple-io",
+                "--no-display-prompt",
                 "-f",
                 prompt_path,
             ]
@@ -65,13 +67,14 @@ class LlamaCppRunner:
                 capture_output=True,
                 text=True,
                 stdin=subprocess.DEVNULL,
-                timeout=120,
+                timeout=180,
             )
         except subprocess.TimeoutExpired as exc:
-            raise RuntimeError("llama-cli timed out") from exc
+            raise RuntimeError("llama-cli timed out after 180 seconds") from exc
         finally:
             if prompt_path:
                 Path(prompt_path).unlink(missing_ok=True)
         if result.returncode != 0:
             raise RuntimeError(result.stderr.strip() or result.stdout.strip())
-        return result.stdout.strip()
+        lines = [line.strip() for line in result.stdout.splitlines() if line.strip()]
+        return lines[-1] if lines else ""
