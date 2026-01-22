@@ -1,7 +1,64 @@
 from __future__ import annotations
 
+import json
+import re
 import subprocess
 from pathlib import Path
+
+
+def _normalize_ru_user_text(text: str) -> str:
+    # Lightweight normalization for RU prompts to improve tool-call parsing.
+    if not re.search(r"[А-Яа-яЁё]", text or ""):
+        return text
+    normalized = text.lower()
+    normalized = re.sub(r"\b(пожалуйста|плиз)\b", "", normalized)
+    replacements = {
+        "переведи": "convert",
+        "перевести": "convert",
+        "переведите": "convert",
+        "цельсия": "c",
+        "цельсий": "c",
+        "celsius": "c",
+        "фаренгейт": "f",
+        "фаренгейта": "f",
+        "fahrenheit": "f",
+        "фунт": "lb",
+        "фунта": "lb",
+        "фунтов": "lb",
+        "килограмм": "kg",
+        "килограмма": "kg",
+        "килограммов": "kg",
+        "кг": "kg",
+        "унция": "oz",
+        "унции": "oz",
+        "oz": "oz",
+    }
+    for src, dst in replacements.items():
+        normalized = re.sub(rf"\b{re.escape(src)}\b", dst, normalized)
+    return " ".join(normalized.split())
+
+
+def _extract_first_json(text: str) -> str:
+    start = 0
+    while True:
+        start = text.find("{", start)
+        if start == -1:
+            return text
+        depth = 0
+        for idx in range(start, len(text)):
+            ch = text[idx]
+            if ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    candidate = text[start : idx + 1]
+                    try:
+                        obj = json.loads(candidate)
+                        return json.dumps(obj)
+                    except json.JSONDecodeError:
+                        break
+        start += 1
 
 
 class LlamaCppRunner:
@@ -30,7 +87,7 @@ class LlamaCppRunner:
             if role == "system":
                 system_text = content
             elif role == "user":
-                user_text = content
+                user_text = _normalize_ru_user_text(content)
         prompt = f"{system_text}\n\nUser: {user_text}\nAnswer:"
         cmd = [
             self.llama_bin,
@@ -43,9 +100,14 @@ class LlamaCppRunner:
             "--temp",
             str(self.temperature),
             "--n-predict",
-            "64",
+            "128",
             "--simple-io",
             "--no-display-prompt",
+            "--no-show-timings",
+            "--no-conversation",
+            "--single-turn",
+            "--prompt",
+            prompt,
         ]
         cmd_line = " ".join(cmd)
         try:
@@ -54,12 +116,12 @@ class LlamaCppRunner:
                 text=True,
                 encoding="utf-8",
                 errors="replace",
-                stdin=subprocess.PIPE,
+                stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
             )
-            stdout, stderr = proc.communicate(input=prompt, timeout=15)
+            stdout, stderr = proc.communicate(timeout=15)
         except subprocess.TimeoutExpired as exc:
             proc.kill()
             try:
@@ -81,5 +143,4 @@ class LlamaCppRunner:
                 f"cmd: {cmd_line} returncode: {proc.returncode} "
                 f"stdout: {stdout_tail} stderr: {stderr_tail}"
             )
-        lines = [line.strip() for line in stdout.splitlines() if line.strip()]
-        return lines[-1] if lines else ""
+        return _extract_first_json(stdout)
