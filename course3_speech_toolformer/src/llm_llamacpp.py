@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import subprocess
-import tempfile
 from pathlib import Path
 
 
@@ -33,48 +32,54 @@ class LlamaCppRunner:
             elif role == "user":
                 user_text = content
         prompt = f"{system_text}\n\nUser: {user_text}\nAnswer:"
-        prompt_path = None
+        cmd = [
+            self.llama_bin,
+            "-m",
+            self.model_path,
+            "--ctx-size",
+            str(self.ctx),
+            "--n-gpu-layers",
+            str(self.gpu_layers),
+            "--temp",
+            str(self.temperature),
+            "--n-predict",
+            "64",
+            "--simple-io",
+            "--no-display-prompt",
+        ]
+        cmd_line = " ".join(cmd)
         try:
-            tmp = tempfile.NamedTemporaryFile(
-                mode="w",
-                encoding="utf-8",
-                delete=False,
-                suffix=".txt",
-            )
-            tmp.write(prompt)
-            tmp.close()
-            prompt_path = tmp.name
-
-            cmd = [
-                self.llama_bin,
-                "-m",
-                self.model_path,
-                "--ctx-size",
-                str(self.ctx),
-                "--n-gpu-layers",
-                str(self.gpu_layers),
-                "--temp",
-                str(self.temperature),
-                "--n-predict",
-                str(self.max_tokens),
-                "--simple-io",
-                "--no-display-prompt",
-                "-f",
-                prompt_path,
-            ]
-            result = subprocess.run(
+            proc = subprocess.Popen(
                 cmd,
-                capture_output=True,
                 text=True,
-                stdin=subprocess.DEVNULL,
-                timeout=180,
+                encoding="utf-8",
+                errors="replace",
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
             )
+            stdout, stderr = proc.communicate(input=prompt, timeout=15)
         except subprocess.TimeoutExpired as exc:
-            raise RuntimeError("llama-cli timed out after 180 seconds") from exc
-        finally:
-            if prompt_path:
-                Path(prompt_path).unlink(missing_ok=True)
-        if result.returncode != 0:
-            raise RuntimeError(result.stderr.strip() or result.stdout.strip())
-        lines = [line.strip() for line in result.stdout.splitlines() if line.strip()]
+            proc.kill()
+            try:
+                stdout, stderr = proc.communicate(timeout=2)
+            except subprocess.TimeoutExpired:
+                stdout, stderr = "", ""
+            stdout_tail = (stdout or "")[-800:]
+            stderr_tail = (stderr or "")[-800:]
+            rc = proc.returncode
+            raise RuntimeError(
+                "llama-cli timed out after 15 seconds; "
+                f"cmd: {cmd_line} returncode: {rc} stdout: {stdout_tail} stderr: {stderr_tail}"
+            ) from exc
+        if proc.returncode != 0:
+            stdout_tail = (stdout or "")[-800:]
+            stderr_tail = (stderr or "")[-800:]
+            raise RuntimeError(
+                f"llama-cli failed (code {proc.returncode}); "
+                f"cmd: {cmd_line} returncode: {proc.returncode} "
+                f"stdout: {stdout_tail} stderr: {stderr_tail}"
+            )
+        lines = [line.strip() for line in stdout.splitlines() if line.strip()]
         return lines[-1] if lines else ""
