@@ -12,50 +12,91 @@ def _normalize_ru_user_text(text: str) -> str:
         return text
     normalized = text.lower()
     normalized = re.sub(r"\b(пожалуйста|плиз)\b", "", normalized)
+    # Simple token-level replacements for common RU units/verbs.
     replacements = {
         "переведи": "convert",
         "перевести": "convert",
         "переведите": "convert",
+        "кельвин": "k",
+        "кельвина": "k",
+        "кельвинов": "k",
         "цельсия": "c",
         "цельсий": "c",
-        "celsius": "c",
+        "цельсию": "c",
         "фаренгейт": "f",
         "фаренгейта": "f",
-        "fahrenheit": "f",
-        "фунт": "lb",
-        "фунта": "lb",
-        "фунтов": "lb",
+        "фаренгейту": "f",
+        "кг": "kg",
         "килограмм": "kg",
         "килограмма": "kg",
         "килограммов": "kg",
-        "кг": "kg",
-        "унция": "oz",
-        "унции": "oz",
-        "oz": "oz",
+        "г": "g",
+        "гр": "g",
+        "грамм": "g",
+        "грамма": "g",
+        "граммов": "g",
+        "фунт": "lb",
+        "фунта": "lb",
+        "фунтов": "lb",
+        "мм": "mm",
+        "см": "cm",
+        "км": "km",
+        "м": "m",
+        "метр": "m",
+        "метра": "m",
+        "метров": "m",
     }
     for src, dst in replacements.items():
         normalized = re.sub(rf"\b{re.escape(src)}\b", dst, normalized)
+    # Replace standalone "в" as a connector ("to") without touching other words.
+    normalized = re.sub(r"(?<!\w)в(?!\w)", "to", normalized)
     return " ".join(normalized.split())
 
 
+def _should_allow_unit_convert(text: str) -> bool:
+    # Minimal intent gate to reduce false tool calls.
+    if not text:
+        return False
+    lowered = text.lower()
+    if re.search(r"\b(переведи|перевести|переведите|convert|convertir)\b", lowered):
+        return True
+    if "what is" in lowered and " in " in lowered:
+        return True
+    if re.search(r"\d", lowered) and re.search(r"\b\d[\d\s.,]*\s*\w+\s+in\s+\w+\b", lowered):
+        return True
+    has_to = re.search(r"(?<!\w)в(?!\w)", lowered) or re.search(r"\bto\b", lowered)
+    if re.search(r"\bсколько\b", lowered) and has_to:
+        return True
+    return bool(has_to)
+
+
 def _extract_first_json(text: str) -> str:
+    cleaned = text.strip()
+    if cleaned.startswith("```") and "```" in cleaned[3:]:
+        first_break = cleaned.find("\n")
+        if first_break != -1:
+            cleaned = cleaned[first_break + 1 :]
+        end_fence = cleaned.rfind("```")
+        if end_fence != -1:
+            cleaned = cleaned[:end_fence]
+        cleaned = cleaned.strip()
     start = 0
     while True:
-        start = text.find("{", start)
+        start = cleaned.find("{", start)
         if start == -1:
-            return text
+            return cleaned
         depth = 0
-        for idx in range(start, len(text)):
-            ch = text[idx]
+        for idx in range(start, len(cleaned)):
+            ch = cleaned[idx]
             if ch == "{":
                 depth += 1
             elif ch == "}":
                 depth -= 1
                 if depth == 0:
-                    candidate = text[start : idx + 1]
+                    candidate = cleaned[start : idx + 1]
                     try:
                         obj = json.loads(candidate)
-                        return json.dumps(obj)
+                        return json.dumps(obj, ensure_ascii=False)
                     except json.JSONDecodeError:
                         break
         start += 1
@@ -81,13 +122,17 @@ class LlamaCppRunner:
     def infer(self, messages: list[dict]) -> str:
         system_text = ""
         user_text = ""
+        raw_user_text = ""
         for msg in messages:
             role = msg.get("role")
             content = msg.get("content", "")
             if role == "system":
                 system_text = content
             elif role == "user":
+                raw_user_text = content
                 user_text = _normalize_ru_user_text(content)
+        if not _should_allow_unit_convert(raw_user_text):
+            return "NO_TOOL"
         prompt = f"{system_text}\n\nUser: {user_text}\nAnswer:"
         cmd = [
             self.llama_bin,
