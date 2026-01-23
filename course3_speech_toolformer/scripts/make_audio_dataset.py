@@ -115,6 +115,7 @@ def main() -> None:
                 "audio_path": str(audio_path),
                 "lang": sample.get("lang"),
                 "tool_required": sample.get("tool_required"),
+                "expected_tool_call": sample.get("expected_tool_call"),
             }
             out_f.write(json.dumps(record, ensure_ascii=False) + "\n")
 

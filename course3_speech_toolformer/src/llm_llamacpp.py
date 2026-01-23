@@ -139,13 +139,13 @@ class LlamaCppRunner:
             "-m",
             self.model_path,
             "--ctx-size",
-            str(self.ctx),
+            "1024",
             "--n-gpu-layers",
             str(self.gpu_layers),
             "--temp",
             str(self.temperature),
             "--n-predict",
-            "128",
+            "64",
             "--simple-io",
             "--no-display-prompt",
             "--no-show-timings",
@@ -166,7 +166,7 @@ class LlamaCppRunner:
                 stderr=subprocess.PIPE,
                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
             )
-            stdout, stderr = proc.communicate(timeout=15)
+            stdout, stderr = proc.communicate(timeout=60)
         except subprocess.TimeoutExpired as exc:
             proc.kill()
             try:
@@ -177,7 +177,7 @@ class LlamaCppRunner:
             stderr_tail = (stderr or "")[-800:]
             rc = proc.returncode
             raise RuntimeError(
-                "llama-cli timed out after 15 seconds; "
+                "llama-cli timed out after 60 seconds; "
                 f"cmd: {cmd_line} returncode: {rc} stdout: {stdout_tail} stderr: {stderr_tail}"
             ) from exc
         if proc.returncode != 0:
