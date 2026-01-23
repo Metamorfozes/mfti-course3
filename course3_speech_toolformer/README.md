@@ -23,3 +23,22 @@ Run evaluation with the local engine:
 ```powershell
 python scripts/eval_text_baseline.py --engine llamacpp --limit 50 --debug_k 10
 ```
+
+## Step 3: ASR baseline (audio → text)
+
+We evaluate an ASR baseline as part of the Speech Toolformer pipeline.
+
+- Audio dataset is generated using `pyttsx3` from synthetic RU/EN text queries.
+- Metadata is stored in `data/audio_dataset.jsonl`.
+- ASR model: `faster-whisper (small)`.
+- Evaluation metric: Word Error Rate (WER), computed in raw and normalized forms.
+
+Results (N=50):
+- overall_wer_raw = 0.7197
+- average_wer_raw = 0.7183
+- overall_wer_norm = 0.5189
+- average_wer_norm = 0.5210
+
+CUDA note:
+- GPU inference requires CUDA 12.x runtime (`cublas64_12.dll`).
+- On GTX 1660 Super, GPU improves speed; WER is comparable to CPU.
