@@ -175,12 +175,21 @@ def main() -> None:
         default=os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "data", "audio_dataset.jsonl")),
         help="Path to audio dataset JSON/JSONL.",
     )
-    parser.add_argument("--engine", choices=["stub", "llamacpp"], default="llamacpp")
-    parser.add_argument("--model_path", default=None, help="Optional override for LlamaCpp model path.")
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--debug_k", type=int, default=10)
+    parser.add_argument(
+        "--pipeline",
+        choices=["whisper_llamacpp", "omni_asr_llamacpp", "omni_direct"],
+        default="whisper_llamacpp",
+    )
+    parser.add_argument("--asr_engine", choices=["fasterwhisper", "openai"], default="fasterwhisper")
     parser.add_argument("--asr_model_size", default="small")
     parser.add_argument("--asr_device", default=None)
+    parser.add_argument("--omni_model", default="gpt-4o-mini")
+    parser.add_argument("--transcribe_model", default="gpt-4o-mini-transcribe")
+    parser.add_argument("--timeout", type=int, default=120)
+    parser.add_argument("--engine", choices=["stub", "llamacpp"], default="llamacpp")
+    parser.add_argument("--model_path", default=None, help="Optional override for LlamaCpp model path.")
     args = parser.parse_args()
 
     data_path = Path(args.data)
@@ -191,42 +200,71 @@ def main() -> None:
     limit = len(samples) if args.limit is None else min(args.limit, len(samples))
     samples = samples[:limit]
 
-    asr = FasterWhisperASR(model_size=args.asr_model_size, device=args.asr_device)
-
     preds = []
-    error_cases = []
     mismatches = []
 
-    if args.engine == "stub":
-        from llm_stub import infer
+    pipeline = args.pipeline
+    if pipeline == "omni_direct":
+        asr = None
+        asr_engine = "none"
+        llm_engine = "omni"
+    elif pipeline == "omni_asr_llamacpp":
+        from asr_openai import OpenAIASR
 
-        def _infer(messages: list[dict]) -> str:
-            return infer(messages)
+        asr = OpenAIASR(model=args.transcribe_model)
+        asr_engine = "openai"
+        llm_engine = args.engine
     else:
-        from config import load_env
-        from llm_llamacpp import LlamaCppRunner
+        asr_engine = args.asr_engine
+        if asr_engine == "openai":
+            from asr_openai import OpenAIASR
 
-        env = load_env()
-        if args.model_path:
-            env["LLAMA_MODEL"] = args.model_path
-        runner = LlamaCppRunner(
-            llama_bin=env["LLAMA_BIN"],
-            model_path=env["LLAMA_MODEL"],
-            ctx=env["LLAMA_CTX"],
-            gpu_layers=env["LLAMA_GPU_LAYERS"],
-            temperature=env["LLAMA_TEMP"],
-            max_tokens=env["LLAMA_MAX_TOKENS"],
-        )
+            asr = OpenAIASR(model=args.transcribe_model)
+        else:
+            asr = FasterWhisperASR(model_size=args.asr_model_size, device=args.asr_device)
+        llm_engine = args.engine
 
-        def _infer(messages: list[dict]) -> str:
-            return runner.infer(messages)
+    if pipeline != "omni_direct":
+        if args.engine == "stub":
+            from llm_stub import infer
+
+            def _infer(messages: list[dict]) -> str:
+                return infer(messages)
+        else:
+            from config import load_env
+            from llm_llamacpp import LlamaCppRunner
+
+            env = load_env()
+            if args.model_path:
+                env["LLAMA_MODEL"] = args.model_path
+            runner = LlamaCppRunner(
+                llama_bin=env["LLAMA_BIN"],
+                model_path=env["LLAMA_MODEL"],
+                ctx=env["LLAMA_CTX"],
+                gpu_layers=env["LLAMA_GPU_LAYERS"],
+                temperature=env["LLAMA_TEMP"],
+                max_tokens=env["LLAMA_MAX_TOKENS"],
+                timeout=args.timeout,
+            )
+
+            def _infer(messages: list[dict]) -> str:
+                return runner.infer(messages)
+    else:
+        from omni_toolcall_openai import OpenAIOmniToolCaller
+
+        omni = OpenAIOmniToolCaller(model=args.omni_model)
 
     for sample in samples:
         audio_path = sample.get("audio_path", "")
-        asr_raw = asr.transcribe(audio_path)
-        asr_text = normalize_asr_text(asr_raw)
-        messages = build_messages(asr_text)
-        out = _infer(messages)
+        asr_raw = None
+        asr_text = None
+        if pipeline == "omni_direct":
+            out = omni.infer_tool_call_from_audio(audio_path)
+        else:
+            asr_raw = asr.transcribe(audio_path)
+            asr_text = normalize_asr_text(asr_raw)
+            messages = build_messages(asr_text)
+            out = _infer(messages)
         status, toolcall = parse_toolcall(out)
 
         preds.append({"status": status, "toolcall": toolcall})
@@ -244,23 +282,16 @@ def main() -> None:
             if not _toolcall_equal(expected_tool, predicted_tool_call):
                 mismatch = True
 
-        if mismatch and len(error_cases) < 20:
-            error_cases.append(
-                {
-                    "id": sample.get("id"),
-                    "asr_raw": asr_raw,
-                    "asr_text": asr_text,
-                    "expected": expected_tool,
-                    "predicted": {"status": status, "tool_call": predicted_tool_call},
-                }
-            )
         if mismatch:
             mismatches.append(
                 {
+                    "id": sample.get("id"),
+                    "audio_path": audio_path,
                     "asr_raw": asr_raw,
                     "asr_text": asr_text,
                     "expected": expected_tool,
                     "predicted": {"status": status, "tool_call": predicted_tool_call},
+                    "model_out": out,
                 }
             )
 
@@ -268,8 +299,11 @@ def main() -> None:
 
     report = {
         "metrics": metrics,
-        "engine": args.engine,
+        "pipeline": pipeline,
+        "asr_engine": asr_engine,
+        "llm_engine": llm_engine,
         "limit": limit,
+        "mismatches": mismatches[:50],
     }
     out_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "data", "audio_eval_report.json"))
     with open(out_path, "w", encoding="utf-8") as f:
@@ -278,10 +312,14 @@ def main() -> None:
     print(json.dumps(report["metrics"], ensure_ascii=False, indent=2))
     print(f"=== DEBUG (first {args.debug_k} mismatches) ===")
     for item in mismatches[: args.debug_k]:
-        print(f'asr_raw: {item.get("asr_raw")}')
-        print(f'asr_text: {item.get("asr_text")}')
+        print(f'audio_path: {item.get("audio_path")}')
+        if item.get("asr_raw") is not None:
+            print(f'asr_raw: {item.get("asr_raw")}')
+        if item.get("asr_text") is not None:
+            print(f'asr_text: {item.get("asr_text")}')
         print(f'expected: {json.dumps(item.get("expected"), ensure_ascii=False)}')
         print(f'pred: {json.dumps(item.get("predicted"), ensure_ascii=False)}')
+        print(f'model_out: {item.get("model_out")}')
 
 
 if __name__ == "__main__":

@@ -1,155 +1,161 @@
-# Course 3 — Speech Toolformer (ASR → Tool Call)
+# Speech Toolformer: Audio to ASR to Tool Calling
 
-Учебный проект для курса МФТИ (Course 3), реализующий базовый **Speech Toolformer pipeline**:
-распознавание речи → нормализация текста → LLM → вызов инструмента в строгом JSON-формате.
+This project explores a speech-based tool-calling pipeline, where spoken user requests are converted into structured tool calls or NO_TOOL decisions.
 
-Проект выполнен в формате **baseline** (без обучения моделей) с упором на:
-- воспроизводимость,
-- строгую валидацию tool calls,
-- прозрачные метрики и отладку ошибок.
+The main focus of the project is error propagation across pipeline stages:
+- speech recognition (ASR)
+- semantic parsing
+- tool invocation decision
 
----
-
-## Pipeline
-
-audio
-↓
-ASR (Faster-Whisper, small)
-↓
-text normalization
-↓
-LLM (llama.cpp, GGUF)
-↓
-tool call (JSON) / NO_TOOL
-↓
-metrics & error analysis
-
-yaml
-Copy code
+The task domain is intentionally simple (unit conversion) in order to clearly isolate and analyze errors introduced at each stage.
 
 ---
 
-## Stack
+## Task Description
 
-- **ASR:** faster-whisper (`small`)
-- **LLM:** llama.cpp (`llama-cli.exe`)
-- **Model:** `qwen2.5-1.5b-instruct-q4_k_m.gguf`
-- **GPU:** NVIDIA GTX 1660 Super (CUDA, inference only)
-- **OS:** Windows (PowerShell)
+Given a spoken user request, the system must decide whether a tool is required and, if so, output a structured tool call in JSON format.
 
----
+Example.
 
-## Project structure
+Input (audio):
+"Please convert 367 kilograms to ounces"
 
-course3_speech_toolformer/
-├── data/
-│ ├── text_dataset.jsonl
-│ ├── text_dataset_fixed.jsonl
-│ ├── audio_dataset.jsonl
-│ └── audio/
-├── models/
-│ └── qwen2.5-1.5b-instruct-q4_k_m.gguf
-├── scripts/
-│ ├── make_text_dataset.py
-│ ├── make_audio_dataset.py
-│ ├── eval_text_baseline.py
-│ ├── eval_asr_baseline.py
-│ └── eval_audio_baseline.py
-├── src/
-│ ├── asr_faster_whisper.py
-│ ├── llm_llamacpp.py
-│ ├── llm_stub.py
-│ ├── metrics.py
-│ └── tool_schema.py
-├── tools/
-│ └── llama/llama-cli.exe
-└── README.md
-
-yaml
-Copy code
-
----
-
-## How to run (Windows / PowerShell)
-
-### 1. Install dependencies
-
-```powershell
-pip install -r requirements.txt
-2. Text-only baseline
-powershell
-Copy code
-python scripts/make_text_dataset.py
-python scripts/eval_text_baseline.py
-3. ASR baseline (audio → text)
-powershell
-Copy code
-python scripts/make_audio_dataset.py
-python scripts/eval_asr_baseline.py --device cuda
-Метрика: Word Error Rate (WER) в raw и normalized формах.
-
-4. Speech Toolformer baseline (audio → tool call)
-powershell
-Copy code
-python scripts/eval_audio_baseline.py --engine llamacpp --limit 50
-Скрипт:
-
-выполняет ASR,
-
-нормализует текст,
-
-запускает LLM,
-
-валидирует JSON tool call,
-
-считает precision / recall / exact match.
-
-Tool call format
-LLM должен вернуть либо NO_TOOL, либо ровно один JSON следующего вида:
-
-json
-Copy code
+Output:
+```json
 {
   "name": "unit_convert",
   "arguments": {
-    "value": 187.0,
-    "from_unit": "c",
-    "to_unit": "f",
+    "value": 367.0,
+    "from_unit": "kg",
+    "to_unit": "oz",
     "precision": 2
   }
 }
-Любой лишний текст считается ошибкой парсинга.
+If no numeric conversion is requested, the system must output:
+NO_TOOL
 
-Results (N = 50)
-parsable_rate: ~1.00
+## Pipelines Evaluated
 
-precision: 1.00
+The following pipelines are evaluated and compared:
 
-recall: ~0.98
+  1. Text to LLM to Tool-call
+  2.Audio to ASR
+  3.Audio to ASR to LLM to Tool-call
 
-tool_call_em: ~0.91
+This allows us to separately analyze:
 
-Основные источники ошибок:
+- pure language understanding
+- speech recognition quality
+- cumulative errors in end-to-end speech pipelines
 
-искажения чисел на этапе ASR,
+## Models and Components
 
-агглютинация единиц (kg2g, cm2km),
+ASR:
+- Faster-Whisper (small)
+- Evaluated using Word Error Rate (WER)
+- Inference on GPU (CUDA) when available
 
-редкие неверные интерпретации единиц измерения.
+LLM:
+- Stub baseline (oracle-style parser)
+- Qwen2.5-1.5B-Instruct (GGUF) via llama.cpp
 
-Limitations
-Проект не включает обучение моделей, только inference.
+The LLM is used only for tool-call decision and argument extraction, not for speech recognition.
 
-ASR может вносить числовые и лексические искажения.
+## Data Generation
 
-Допускается небольшая числовая погрешность после ASR.
+Text Dataset
 
-Цель проекта — демонстрация pipeline, а не production-ready решение.
+Generated using:
+scripts/make_text_dataset.py
 
-Project status
-✅ Text baseline
-✅ ASR baseline
-✅ Audio → Tool Call pipeline
-✅ Метрики и debug-отчёты
+Characteristics:
+- English and Russian samples
+- Tool-required and no-tool examples
+- Controlled vocabulary of units
 
-Проект завершён на уровне baseline и соответствует требованиям курса.
+Stored as:
+data/text_dataset.json
+
+Audio Dataset
+
+Generated using:
+scripts/make_audio_dataset.py
+
+Process:
+- Text samples synthesized with TTS
+- One WAV file per sample
+
+Metadata stored in:
+data/audio_dataset.jsonl
+
+## Evaluation Metrics
+
+Tool Calling Metrics:
+- Parsable Rate (valid JSON or NO_TOOL)
+- Tool Required Accuracy
+- Precision
+- Recall
+- False Alarm Rate
+- Exact Match (strict JSON match)
+
+ASR Metrics:
+- WER (raw)
+- WER (normalized)
+
+## Results
+1. Text to LLM to Tool-call (limit = 250)
+| Engine    | Parsable | Tool Acc | Precision | Recall | FPR  | EM   |
+| --------- | -------- | -------- | --------- | ------ | ---- | ---- |
+| Stub      | 1.00     | 1.00     | 1.00      | 1.00   | 0.00 | 1.00 |
+| llama.cpp | 1.00     | 1.00     | 1.00      | 1.00   | 0.00 | 1.00 |
+
+Conclusion:
+The LLM performs tool calling reliably when provided with clean text input.
+
+2. Audio to ASR
+ASR model: Faster-Whisper (small)
+| Metric             | Value |
+| ------------------ | ----- |
+| Overall WER (raw)  | 0.72  |
+| Average WER (raw)  | 0.72  |
+| Overall WER (norm) | 0.52  |
+| Average WER (norm) | 0.52  |
+
+Observation:
+ASR errors are significant and strongly affect downstream reasoning.
+
+3. Audio to ASR to LLM to Tool-call (limit = 250)
+| Engine    | Parsable | Tool Acc | Precision | Recall | FPR  | EM   |
+| --------- | -------- | -------- | --------- | ------ | ---- | ---- |
+| Stub      | 1.00     | 0.94     | 1.00      | 0.93   | 0.00 | 0.84 |
+| llama.cpp | 1.00     | 1.00     | 1.00      | 1.00   | 0.00 | 0.91 |
+
+Conclusion:
+Most remaining errors are caused by ASR distortions of units or numbers, not by the LLM itself.
+
+## Error Analysis
+Typical failure cases include:
+- unit corruption (kg to kfg, inch to инч)
+- merged tokens (kg2g, cm2km)
+- numeric rounding differences after ASR normalization
+Despite these issues, the system shows high robustness once ASR output is sufficiently normalized.
+
+## Notes on Omni Models
+This project does not use an end-to-end omni speech-to-tool model.
+Instead, ASR and LLM stages are explicitly separated in order to analyze error propagation and compare modular pipelines.
+
+## How to Reproduce
+# Text to tool-call
+python scripts/eval_text_baseline.py --engine llamacpp
+
+# ASR evaluation
+python scripts/eval_asr_baseline.py --model_size small --device cuda
+
+# Audio to ASR to tool-call
+python scripts/eval_audio_baseline.py --engine llamacpp
+
+## Summary
+- Tool calling from clean text is nearly perfect.
+- ASR is the main source of errors.
+- Modular pipelines allow detailed error analysis.
+- The project satisfies the goal of evaluating speech-based tool invocation strategies.

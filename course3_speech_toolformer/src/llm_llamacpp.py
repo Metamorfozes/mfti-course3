@@ -111,6 +111,7 @@ class LlamaCppRunner:
         gpu_layers: int = 20,
         temperature: float = 0.0,
         max_tokens: int = 256,
+        timeout: int = 60,
     ) -> None:
         self.llama_bin = llama_bin
         self.model_path = model_path
@@ -118,6 +119,7 @@ class LlamaCppRunner:
         self.gpu_layers = gpu_layers
         self.temperature = temperature
         self.max_tokens = max_tokens
+        self.timeout = timeout
 
     def infer(self, messages: list[dict]) -> str:
         system_text = ""
@@ -166,7 +168,7 @@ class LlamaCppRunner:
                 stderr=subprocess.PIPE,
                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
             )
-            stdout, stderr = proc.communicate(timeout=60)
+            stdout, stderr = proc.communicate(timeout=self.timeout)
         except subprocess.TimeoutExpired as exc:
             proc.kill()
             try:
@@ -177,7 +179,7 @@ class LlamaCppRunner:
             stderr_tail = (stderr or "")[-800:]
             rc = proc.returncode
             raise RuntimeError(
-                "llama-cli timed out after 60 seconds; "
+                f"llama-cli timed out after {self.timeout} seconds; "
                 f"cmd: {cmd_line} returncode: {rc} stdout: {stdout_tail} stderr: {stderr_tail}"
             ) from exc
         if proc.returncode != 0:
