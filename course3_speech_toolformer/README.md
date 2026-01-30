@@ -1,26 +1,29 @@
-# Speech Toolformer: Audio to ASR to Tool Calling
+﻿# Speech Toolformer: Audio → ASR → Tool Calling
 
-This project explores a speech-based tool-calling pipeline, where spoken user requests are converted into structured tool calls or NO_TOOL decisions.
+This project explores speech-based **tool calling**: converting spoken user requests into either a structured tool call (JSON) or a `NO_TOOL` decision.
 
-The main focus of the project is error propagation across pipeline stages:
-- speech recognition (ASR)
-- semantic parsing
-- tool invocation decision
+The core research goal is **error propagation analysis** across stages:
 
-The task domain is intentionally simple (unit conversion) in order to clearly isolate and analyze errors introduced at each stage.
+* speech recognition (ASR)
+* semantic parsing / reasoning
+* tool invocation and schema validity
+
+To isolate errors, the task domain is intentionally simple (**unit conversion**).
 
 ---
 
 ## Task Description
 
-Given a spoken user request, the system must decide whether a tool is required and, if so, output a structured tool call in JSON format.
+Given a spoken request, decide whether a tool is required and, if so, emit a **strictly valid** JSON tool call.
 
-Example.
+**Example**
 
 Input (audio):
-"Please convert 367 kilograms to ounces"
+
+> “Please convert 367 kilograms to ounces”
 
 Output:
+
 ```json
 {
   "name": "unit_convert",
@@ -31,189 +34,218 @@ Output:
     "precision": 2
   }
 }
-If no numeric conversion is requested, the system must output:
+```
+
+If no conversion is requested, the system must output:
+
+```
 NO_TOOL
+```
+
+---
 
 ## Pipelines Evaluated
 
-The following pipelines are evaluated and compared:
+1. **Text → LLM → Tool-call**
+2. **Audio → ASR**
+3. **Audio → ASR → LLM → Tool-call**
+4. **Audio → Omni model → Tool-call** (reference baseline)
 
-  1. Text to LLM to Tool-call
-  2.Audio to ASR
-  3.Audio to ASR to LLM to Tool-call
+This separation allows independent evaluation of:
 
-This allows us to separately analyze:
+* pure language understanding
+* ASR quality
+* cumulative end-to-end speech errors
 
-- pure language understanding
-- speech recognition quality
-- cumulative errors in end-to-end speech pipelines
+---
 
 ## Models and Components
 
-ASR:
-- Faster-Whisper (small)
-- Evaluated using Word Error Rate (WER)
-- Inference on GPU (CUDA) when available
+### ASR
 
-LLM:
-- Stub baseline (oracle-style parser)
-- Qwen2.5-1.5B-Instruct (GGUF) via llama.cpp
+* Faster-Whisper (small)
+* Evaluated with WER (raw and normalized)
+* GPU (CUDA) when available
 
-The LLM is used only for tool-call decision and argument extraction, not for speech recognition.
+### LLM
+
+* Stub baseline (oracle-style parser)
+* Qwen2.5-1.5B-Instruct (GGUF) via `llama.cpp`
+
+> The LLM is **not** used for speech recognition—only for tool-call decision and argument extraction.
+
+---
 
 ## Data Generation
 
-Text Dataset
+### Text Dataset
 
-Generated using:
+Generated with:
+
+```
 scripts/make_text_dataset.py
+```
 
 Characteristics:
-- English and Russian samples
-- Tool-required and no-tool examples
-- Controlled vocabulary of units
+
+* English + Russian
+* Tool-required and no-tool samples
+* Controlled unit vocabulary
 
 Stored as:
+
+```
 data/text_dataset.json
+```
 
-Audio Dataset
+### Audio Dataset
 
-Generated using:
+Generated with:
+
+```
 scripts/make_audio_dataset.py
+```
 
 Process:
-- Text samples synthesized with TTS
-- One WAV file per sample
 
-Metadata stored in:
+* Text samples synthesized with TTS
+* One WAV per sample
+
+Metadata:
+
+```
 data/audio_dataset.jsonl
+```
+
+---
 
 ## Evaluation Metrics
 
-Tool Calling Metrics:
-- Parsable Rate (valid JSON or NO_TOOL)
-- Tool Required Accuracy
-- Precision
-- Recall
-- False Alarm Rate
-- Exact Match (strict JSON match)
+### Tool Calling
 
-ASR Metrics:
-- WER (raw)
-- WER (normalized)
+* Parsable Rate (valid JSON or `NO_TOOL`)
+* Tool Required Accuracy
+* Precision / Recall
+* False Alarm Rate (FAR)
+* Exact Match (strict JSON match)
+
+### ASR
+
+* WER (raw)
+* WER (normalized)
+
+---
 
 ## Results
-1. Text to LLM to Tool-call (limit = 250)
+
+### 1) Text → LLM → Tool-call (limit = 250)
+
 | Engine    | Parsable | Tool Acc | Precision | Recall | FPR  | EM   |
 | --------- | -------- | -------- | --------- | ------ | ---- | ---- |
 | Stub      | 1.00     | 1.00     | 1.00      | 1.00   | 0.00 | 1.00 |
 | llama.cpp | 1.00     | 1.00     | 1.00      | 1.00   | 0.00 | 1.00 |
 
-Conclusion:
-The LLM performs tool calling reliably when provided with clean text input.
+**Conclusion:** with clean text input, tool calling is essentially perfect.
 
-2. Audio to ASR
+---
+
+### 2) Audio → ASR
+
 ASR model: Faster-Whisper (small)
+
 | Metric             | Value |
 | ------------------ | ----- |
 | Overall WER (raw)  | 0.72  |
-| Average WER (raw)  | 0.72  |
 | Overall WER (norm) | 0.52  |
-| Average WER (norm) | 0.52  |
 
-Observation:
-ASR errors are significant and strongly affect downstream reasoning.
+**Observation:** ASR errors are substantial and dominate downstream failures.
 
-3. Audio to ASR to LLM to Tool-call (limit = 250)
+---
+
+### 3) Audio → ASR → LLM → Tool-call (limit = 250)
+
 | Engine    | Parsable | Tool Acc | Precision | Recall | FPR  | EM   |
 | --------- | -------- | -------- | --------- | ------ | ---- | ---- |
 | Stub      | 1.00     | 0.94     | 1.00      | 0.93   | 0.00 | 0.84 |
 | llama.cpp | 1.00     | 1.00     | 1.00      | 1.00   | 0.00 | 0.91 |
 
-Conclusion:
-Most remaining errors are caused by ASR distortions of units or numbers, not by the LLM itself.
+**Conclusion:** remaining errors stem from ASR distortions, not LLM reasoning.
 
-## 4) Audio -> OMNI model -> Tool-call (limit = 250)
+---
+
+## 4) Audio → Omni model → Tool-call (reference)
 
 Model: `gpt-4o-audio-preview`
 
-| Model               | Parsable| Tool Acc | Precision | Recall | FAR  | EM   |
-|---------------------|---------|----------|-----------|--------|------|------|
-| gpt-4o-audio-preview| 0.62    | 0.54     | 0.87      | 0.58   | 0.80 | 0.53 |
+| Model                | Parsable | Tool Acc | Precision | Recall | FAR  | EM   |
+| -------------------- | -------- | -------- | --------- | ------ | ---- | ---- |
+| gpt-4o-audio-preview | 0.62     | 0.54     | 0.87      | 0.58   | 0.80 | 0.53 |
 
-Notes:
-- Many "invalid" cases are caused by non-canonical unit names produced by the omni model (e.g., "celsius"/"fahrenheit", "pounds"/"kilograms", "mi") while our tool schema expects short canonical units (c/f/k, lb/kg, mile, etc.).
-- The omni model also produces false alarms on non-tool requests (e.g., "у меня 132 км яблок", "temperature is 79.0 oz outside"), calling the tool when it should output NO_TOOL.
+**Typical failure modes:**
 
-Planned fix:
-- Add a small post-processing normalization layer (synonym mapping + normalize_unit) and tighten the omni system prompt with explicit negative examples to reduce false alarms.
+* non-canonical units ("kilograms", "celsius", "mi")
+* false positives on non-tool utterances
 
-## Error Analysis
-Typical failure cases include:
-- unit corruption (kg to kfg, inch to инч)
-- merged tokens (kg2g, cm2km)
-- numeric rounding differences after ASR normalization
-Despite these issues, the system shows high robustness once ASR output is sufficiently normalized.
+---
 
-## Notes on Omni Models
-This project does not use an end-to-end omni speech-to-tool model.
-Instead, ASR and LLM stages are explicitly separated in order to analyze error propagation and compare modular pipelines.
+## 5) Audio → Gemma-3n Omni (HF) → Tool-call (limit = 250)
 
-An omni baseline (audio -> model -> tool-call) is now included for reference and comparison, but the main analysis still
-focuses on the modular pipelines.
+Model: `google/gemma-3n-E2B-it` (local, HF)
 
-## How to Reproduce
-# Text to tool-call
-python scripts/eval_text_baseline.py --engine llamacpp
+| Model                  | Parsable | Tool Acc | Precision | Recall | FAR | EM |
+| ---------------------- | -------- | -------- | --------- | ------ | --- | -- |
+| gemma-3n-E2B-it (omni) | —        | —        | —         | —      | —   | —  |
 
-# ASR evaluation
-python scripts/eval_asr_baseline.py --model_size small --device cuda
+### Status
 
-# Audio to ASR to tool-call
-python scripts/eval_audio_baseline.py --engine llamacpp
+* An **experimental omni pipeline** is implemented for architectural comparison.
+* Due to **current Transformers / Gemma-3n audio path limitations** (meta tensors, audio feature plumbing), the model **cannot be reliably executed end-to-end** in this setup.
+* The pipeline is therefore included as **design + code reference**, not as a fully operational baseline.
 
-# Omni baseline (audio to tool-call)
-python scripts/eval_omni_baseline.py --data data/audio_dataset.jsonl
+> When audio support fails, the evaluation code explicitly falls back to **Gemma text (ASR transcript)** and reports this in logs.
+
+---
 
 ## Best Workflow Selection
-Based on the reported metrics, robustness, and error analysis, we consider the modular Audio → ASR → LLM → Tool-call pipeline to be the most reliable workflow for this task.
 
-While the omni (end-to-end audio → tool) model simplifies the pipeline, it shows significantly higher false alarm rates and produces non-canonical tool arguments that violate the predefined tool schema. This leads to lower exact match scores and reduced interpretability.
+Based on metrics, robustness, and error analysis, the **modular Audio → ASR → LLM → Tool-call** pipeline is the most reliable.
 
-In contrast, the modular pipeline allows:
-- independent evaluation of ASR quality
-- explicit normalization of ASR outputs
-- strict control over tool-call schema validation
-- easier debugging and error attribution
+Advantages:
 
-Therefore, despite slightly higher latency, the Audio → ASR → LLM → Tool-call workflow provides the best trade-off between accuracy, robustness, and experimental transparency.
+* independent ASR evaluation
+* explicit text normalization
+* strict schema validation
+* transparent debugging
 
-## Discussion
-This project demonstrates that speech-based tool calling is primarily limited by ASR quality rather than LLM reasoning ability.
+End-to-end omni models are promising but currently:
 
-Key observations:
-- With clean text input, both stub and LLM baselines achieve near-perfect tool-calling performance
-- ASR introduces significant distortions in numbers and units, leading to downstream tool-call errors
-- Omni models can correctly infer intent from audio but often violate strict tool schemas and produce false positives on non-tool requests
+* violate strict schemas
+* show high false-alarm rates
+* are harder to debug and control
 
-These findings suggest that, for practical systems requiring reliable tool invocation, modular pipelines with explicit normalization and validation remain preferable to fully end-to-end omni approaches.
+---
 
-## Limitations and Future Work
-1. Omni model performance could likely be improved by:
-- tighter system prompts with explicit negative examples
-- post-processing normalization layers for units and synonyms
-- or fine-tuning on audio-conditioned tool-calling data
+## Limitations & Future Work
 
-2. The current tool schema is intentionally strict; relaxing or learning schema mappings may improve omni robustness.
+1. Improve omni robustness via:
 
-3. Future work may include:
-- lightweight fine-tuning (LoRA) for text-only tool calling
-- audio-conditioned fine-tuning for joint ASR + tool prediction
-- comparison with other omni-capable models
+   * tighter prompts with negative examples
+   * post-processing normalization layers
+   * audio-conditioned fine-tuning
+
+2. Explore relaxed or learned schema mappings.
+
+3. Future directions:
+
+   * LoRA fine-tuning for text tool-calling
+   * joint ASR + tool prediction
+   * comparison with newer omni-capable models
+
+---
 
 ### Final Summary
-- Tool calling from clean text is almost perfect
-- ASR is the dominant source of errors in speech pipelines
-- Modular pipelines outperform end-to-end omni models in robustness and interpretability
-- Omni models are promising but require additional normalization or training to match modular performance
-- The project fulfills the goal of evaluating and comparing speech-based tool invocation strategies under controlled experimental conditions
+
+* Tool calling from clean text is nearly perfect
+* ASR is the dominant error source
+* Modular pipelines outperform omni models in reliability and interpretability
+* Omni approaches are promising but not yet production-ready under strict schemas
